@@ -11,12 +11,11 @@ const API_TOKEN = "03f916929671498882ee3293c6291187d003267fdc1a4c148e";
 
 // Webhook
 app.post("/webhook", async (req, res) => {
-
-    console.log("Incoming webhook:", JSON.stringify(req.body, null, 2)); // логируем
+    console.log("Incoming webhook:", JSON.stringify(req.body, null, 2));
 
     const hook = req.body;
 
-    // Проверяем тип уведомления
+    // Проверяем, что это текстовое сообщение
     if (hook.typeWebhook !== "incomingMessageReceived") 
         return res.sendStatus(200);
 
@@ -25,17 +24,21 @@ app.post("/webhook", async (req, res) => {
 
     if (!text) return res.sendStatus(200);
 
-    // Проверяем группу-источник
+    // Проверяем только группу-источник (ID_GROUP_A)
     if (chatId === ID_GROUP_A) {
-        await fetch(`https://api.green-api.com/waInstance${ID_INSTANCE}/sendMessage/${API_TOKEN}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                chatId: ID_GROUP_B,
-                message: text
-            })
-        });
-        console.log("Forwarded:", text);
+        try {
+            await fetch(`https://api.green-api.com/waInstance${ID_INSTANCE}/sendMessage/${API_TOKEN}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chatId: ID_GROUP_B,
+                    message: text
+                })
+            });
+            console.log("Forwarded message:", text);
+        } catch (err) {
+            console.error("Error forwarding message:", err);
+        }
     }
 
     res.sendStatus(200);
