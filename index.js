@@ -2,119 +2,112 @@ const express = require('express');
 const axios = require('axios');
 
 const app = express();
-app.use(express.json({ limit: '10mb' })); // важно для голосовых и медиа
+app.use(express.json({ limit: '50mb', verify: (req, res, buf) => { req.rawBody = buf } }));
 
+// ═══════════════════════════════════════════════════════
+// Твои данные – просто меняешь здесь и всё, больше ничего не нужно
+// ═══════════════════════════════════════════════════════
 const ID_INSTANCE = "7105390724";
-const API_TOKEN = "03f916929671498882ee3293c6291187d003267fdc1a4c148e";
-const SOURCE_CHAT = "120363422621243676@g.us"; // откуда берём
-const TARGET_CHAT = "120363404167759617@g.us";   // куда шлём
+const API_TOKEN   = "03f916929671498882ee3293c6291187d003267fdc1a4c148e";
+const SOURCE_CHAT = "120363422621243676@g.us";   // откуда читаем
+const TARGET_CHAT = "120363404167759617@g.us";   // куда пересылаем
+// ═══════════════════════════════════════════════════════
 
-const GREEN_API_URL = `https://7105.api.greenapi.com/waInstance${ID_INSTANCE}`;
+const BASE_URL = `https://7105.api.greenapi.com/waInstance${ID_INSTANCE}`;
 
-// ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ОТПРАВКИ ==========
-async function forwardMessage(messageData) {
+console.log('Сервер запускается…');
+console.log('Источник:', SOURCE_CHAT);
+console.log('Куда пересылаем:', TARGET_CHAT);
+
+// Основная функция пересылки
+async function forward(messageData) {
   try {
     const chatId = messageData.senderData?.chatId || messageData.senderData?.sender;
+    if (chatId !== SOURCE_CHAT) return;                               // не наша группа — игнор
 
-    // Пропускаем сообщения не из нужной группы
-    if (chatId !== SOURCE_CHAT) return;
+    const sender = messageData.senderData?.senderName || "Аноним";
+    const prefix = `От: *${sender}*\n\n`;
 
-    const senderName = messageData.senderData?.senderName || "Неизвестный";
-    const prefix = `✉ Отправитель: *${senderName}*\n\n`;
+    const type = messageData.typeMessage;
 
-    let response;
-
-    if (messageData.typeMessage === "textMessage") {
-      const text = messageData.textMessageData?.textMessageData?.textMessage || "";
-      response = await axios.post(
-        `${GREEN_API_URL}/sendMessage/${API_TOKEN}`,
-        {
-          chatId: TARGET_CHAT,
-          message: prefix + text,
-        }
-      );
-    }
-
-    else if (messageData.typeMessage === "extendedTextMessage") {
-      const text = messageData.extendedTextMessageData?.text || "";
-      response = await axios.post(
-        `${GREEN_API_URL}/sendMessage/${API_TOKEN}`,
-        {
-          chatId: TARGET_CHAT,
-          message: prefix + text,
-        }
-      );
-    }
-
-    else if (messageData.typeMessage === "imageMessage" || 
-             messageData.typeMessage === "videoMessage" || 
-             messageData.typeMessage === "documentMessage" || 
-             messageData.typeMessage === "audioMessage" ||
-             messageData.typeMessage === "stickerMessage") {
-
-      const fileUrl = messageData[messageData.typeMessage]?.urlMessage || 
-                      messageData[messageData.typeMessage]?.directPath; // иногда url в другом месте
-
-      // Скачиваем файл
-      const fileResponse = await axios.get(fileUrl || messageData[messageData.typeMessage]?.downloadUrl, {
-        responseType: 'arraybuffer',
-        headers: { 'Authorization': `Bearer ${API_TOKEN}` }
+    // ТЕКСТ
+    if (type === "textMessage" || type === "extendedTextMessage") {
+      const text = messageData.textMessageData?.textMessageData?.textMessage ||
+                   messageData.extendedTextMessageData?.text || "";
+      await axios.post(`${BASE_URL}/sendMessage/${API_TOKEN}`, {
+        chatId: TARGET_CHAT,
+        message: prefix + text
       });
+      console.log("Текст переслано от", sender);
+    }
 
-      const base64 = Buffer.from(fileResponse.data).toString('base64');
+    // ГОЛОСОВЫЕ СООБЩЕНИЯ
+    else if (type === "audioMessage") {
+      const url = messageData.audioMessage?.urlVoiceMessage;
+      if (!url) return console.log("Голосовое без URL");
 
-      let caption = prefix;
-      if (messageData[messageData.typeMessage]?.caption) {
-        caption += messageData[messageData.typeMessage].caption;
-      }
+      await axios.post(`${BASE_URL}/sendVoiceMessage/${API_TOKEN}`, {
+        chatId: TARGET_CHAT,
+        link: url,
+        caption: prefix
+      });
+      console.log("Голосовое переслано от", sender);
+    }
 
+    // КАРТИНКИ, ВИДЕО, ДОКУМЕНТЫ, СТИКЕРЫ — всё по ссылке (самый стабильный способ)
+    else if (["imageMessage","videoMessage","documentMessage","stickerMessage"].includes(type)) {
+      const media = messageData[type];
+      const url = media?.urlMessage || media?.downloadUrl;
+      if (!url) return console.log(`${type} без URL`);
+
+      let endpoint = "sendFileByUrl";
       const payload = {
         chatId: TARGET_CHAT,
-        caption: caption,
-        file: base64,
+        link: url,
+        caption: prefix + (media?.caption || "")
       };
 
-      let endpoint;
-      if (messageData.typeMessage === "imageMessage") endpoint = "sendFileByUpload";
-      else if (messageData.type === "videoMessage") endpoint = "sendFileByUpload";
-      else if (messageData.type === "documentMessage") {
-        payload.fileName = messageData.documentMessage?.fileName || "file";
-        endpoint = "sendFileByUpload";
-      }
-      else if (messageData.type === "audioMessage") endpoint = "sendFileByUpload";
-      else if (messageData.type === "stickerMessage") endpoint = "sendFileByUpload";
+      if (type === "documentMessage") payload.fileName = media.fileName || "file";
 
-      response = await axios.post(`${GREEN_API_URL}/${endpoint}/${API_TOKEN}`, payload);
+      await axios.post(`${BASE_URL}/${endpoint}/${API_TOKEN}`, payload);
+      console.log(`${type} переслано от`, sender);
     }
 
-    console.log("Переслано:", response.data);
-  } catch (err) {
-    console.error("Ошибка пересылки:", err.response?.data || err.message);
+    else {
+      console.log("Неизвестный/неподдерживаемый тип:", type);
+    }
+  } catch (e) {
+    console.error("Ошибка пересылки:", e.response?.data || e.message);
+  );
   }
 }
 
-// ========== ОСНОВНОЙ ВЕБХУК ==========
+// Webhook от Green-API
 app.post('/webhook', async (req, res) => {
+  console.log("Webhook получен в", new Date().toLocaleString());
+
   const body = req.body;
 
-  // Green-API присылает несколько типов уведомлений, нам нужны только входящие сообщения
   if (body.typeWebhook === "incomingMessageReceived" && body.messageData) {
-    await forwardMessage(body.messageData);
+    await forward(body.messageData);
   }
 
-  // Важно: всегда отвечаем 200, иначе Green-API будет слать повторно
-  res.status(200).send('OK');
+  res.status(200).send("OK");
 });
 
-// Простой роут для проверки, что сервер живой (Render требует)
+// Живой-чек для Render
 app.get('/', (req, res) => {
-  res.send('WhatsApp Forwarder работает! 🚀');
+  res.send(`
+    <h2>WhatsApp Forwarder работает!</h2>
+    <p><b>Откуда:</b> ${SOURCE_CHAT}</p>
+    <p><b>Куда:</b> ${TARGET_CHAT}</p>
+    <p>Всё ок — сообщения будут пересылаться автоматически</p>
+  `);
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Сервер запущен на порту ${PORT}`);
-  console.log(`Установи webhook в личном кабинете Green-API:`);
-  console.log(`   https://7105.api.greenapi.com/waInstance${ID_INSTANCE}/setSettings/${API_TOKEN}`);
-  console.log(`   URL: https://твой-сайт.onrender.com/webhook`);
+  console.log(`Webhook URL → https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'твой-сервис'}.onrender.com/webhook`);
+  console.log("Зайди в Green-API и укажи этот URL в настройках webhook!");
 });
