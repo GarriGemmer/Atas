@@ -7,8 +7,8 @@ app.use(express.json({ limit: "50mb" }));
 // ======== ВАШИ ДАННЫЕ ========
 const ID_INSTANCE = "7105390724"; 
 const API_TOKEN = "03f916929671498882ee3293c6291187d003267fdc1a4c148e"; 
-const TARGET_CHAT = "120363404167759617@g.us"; // куда пересылать
-const SOURCE_CHAT = "120363422621243676@g.us"; // группа источник
+const SOURCE_CHAT = "120363422621243676@g.us";  // группа источник
+const TARGET_CHAT = "120363404167759617@g.us";  // группа получатель
 // ============================
 
 // ======== ФУНКЦИИ ========
@@ -28,10 +28,11 @@ async function sendFile(chatId, base64, fileName, caption) {
   });
 }
 
-async function downloadFile(fileName) {
-  const url = `https://api.green-api.com/waInstance${ID_INSTANCE}/downloadFile/${API_TOKEN}?fileName=${fileName}`;
-  const res = await axios.get(url);
-  return res.data; // base64
+// скачиваем файл с downloadUrl и конвертим в base64
+async function downloadFileFromUrl(url) {
+  const res = await axios.get(url, { responseType: "arraybuffer" });
+  const base64 = Buffer.from(res.data, "binary").toString("base64");
+  return base64;
 }
 
 // ======== WEBHOOK ========
@@ -39,9 +40,8 @@ app.post("/webhook", async (req, res) => {
   try {
     const msg = req.body;
     console.log("Incoming:", JSON.stringify(msg, null, 2));
-    
-    // сразу отвечаем Green-API
-    res.sendStatus(200);
+
+    res.sendStatus(200); // сразу отвечаем Green-API
 
     // игнорируем ненужные уведомления
     if (msg.typeWebhook !== "incomingMessageReceived") return;
@@ -61,12 +61,15 @@ app.post("/webhook", async (req, res) => {
     }
 
     // ====== 2️⃣ МЕДИА ======
-    const fileData = msg.messageData.fileMessageData;
+    const fileData = msg.messageData.fileMessageData || msg.messageData.audioMessage || msg.messageData.videoMessage || msg.messageData.documentMessage;
     if (fileData) {
-      const fileBase64 = await downloadFile(fileData.fileName);
-      let caption = "";
+      const url = fileData.downloadUrl;
+      if (!url) return;
 
-      switch(type){
+      const base64 = await downloadFileFromUrl(url);
+
+      let caption = "";
+      switch (type){
         case "imageMessage":
           caption = `📸 Фото от ${senderName}`;
           break;
@@ -85,7 +88,7 @@ app.post("/webhook", async (req, res) => {
           caption = `📎 Файл от ${senderName}`;
       }
 
-      await sendFile(TARGET_CHAT, fileBase64, fileData.fileName, caption);
+      await sendFile(TARGET_CHAT, base64, fileData.fileName, caption);
     }
 
   } catch (err) {
