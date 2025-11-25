@@ -1,13 +1,10 @@
 {
   "name": "whatsapp-forwarder",
   "version": "1.0.0",
-  "description": "Пересылка сообщений из одной группы WhatsApp в другую через Green-API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.21.1",
     "axios": "^1.7.7"
