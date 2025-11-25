@@ -1,103 +1,88 @@
-const express = require("express");
-const fetch = require("node-fetch");
+import express from "express";
+import fetch from "node-fetch";
+
 const app = express();
 app.use(express.json());
 
-const ID_GROUP_FROM = "120363422621243676@g.us"; 
-const ID_GROUP_TO   = "120363404167759617@g.us";
+const ID_GROUP_A = "120363422621243676@g.us";
+const ID_GROUP_B = "120363404167759617@g.us";
 
 const ID_INSTANCE = "7105390724";
-const API_TOKEN   = "03f916929671498882ee3293c6291187d003267fdc148e";
+const API_TOKEN = "03f916929671498882ee3293c6291187d003267fdc1a4c148e";
 
-// -----------------------
-// Отправка текста
-// -----------------------
-async function sendText(chatId, text) {
-    await fetch(`https://api.green-api.com/waInstance${ID_INSTANCE}/sendMessage/${API_TOKEN}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId, message: text })
-    });
-}
+const GREEN_API = `https://api.green-api.com/waInstance${ID_INSTANCE}`;
 
-// -----------------------
-// Отправка медиа
-// -----------------------
-async function sendMedia(chatId, url, fileName, caption) {
-    await fetch(`https://api.green-api.com/waInstance${ID_INSTANCE}/sendFileByUrl/${API_TOKEN}`, {
+// UNIVERSAL MEDIA FORWARD FUNCTION
+async function forwardMedia(url, fileName, mime, caption, sender) {
+    return fetch(`${GREEN_API}/sendFileByUrl/${API_TOKEN}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-            chatId,
+            chatId: ID_GROUP_B,
             urlFile: url,
             fileName: fileName || "file",
-            caption: caption || ""
+            caption: `📩 ${sender}\n${caption || ""}`,
         })
     });
 }
 
-
-// -----------------------
-// Вебхук
-// -----------------------
+// MAIN WEBHOOK
 app.post("/webhook", async (req, res) => {
-    const data = req.body;
+    console.log("Incoming:", JSON.stringify(req.body, null, 2));
 
-    console.log("Incoming:", JSON.stringify(data, null, 2));
+    const hook = req.body;
+
+    if (hook.typeWebhook !== "incomingMessageReceived")
+        return res.sendStatus(200);
+
+    const chatId = hook.senderData.chatId;
+    const sender = hook.senderData.senderName || "Unknown";
+
+    // Только пересылка из группы А
+    if (chatId !== ID_GROUP_A)
+        return res.sendStatus(200);
+
+    const msg = hook.messageData;
 
     try {
-        // ============================================================
-        // 1) ФОРМАТ №1 → incomingMessageReceived (только текст)
-        // ============================================================
-        if (data.typeWebhook === "incomingMessageReceived") {
+        // ---------- TEXT ----------
+        if (msg.typeMessage === "textMessage") {
+            const text = msg.textMessageData.textMessage;
 
-            const chatId = data.senderData.chatId;
-            if (chatId !== ID_GROUP_FROM) return res.sendStatus(200);
+            await fetch(`${GREEN_API}/sendMessage/${API_TOKEN}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    chatId: ID_GROUP_B,
+                    message: `📩 ${sender}: ${text}`
+                })
+            });
 
-            const sender = data.senderData.senderName || "Unknown";
-            const typeMsg = data.messageData.typeMessage;
-
-            if (typeMsg === "textMessage") {
-                const text = data.messageData.textMessageData.textMessage;
-                await sendText(ID_GROUP_TO, `${sender}: ${text}`);
-            }
-
-            return res.sendStatus(200);
+            console.log("Forwarded TEXT:", text);
         }
 
-        // ============================================================
-        // 2) ФОРМАТ №2 → incoming (фото / аудио / видео / док)
-        // ============================================================
-        if (data.type === "incoming") {
+        // ---------- MEDIA: PHOTO, VIDEO, AUDIO, DOCS ----------
+        if (msg.typeMessage !== "textMessage" && msg.fileMessageData) {
 
-            if (data.chatId !== ID_GROUP_FROM) return res.sendStatus(200);
+            const f = msg.fileMessageData;
 
-            const sender = data.senderName || "Unknown";
-            const typeMsg = data.typeMessage;
+            await forwardMedia(
+                f.downloadUrl,
+                f.fileName,
+                f.mimeType,
+                f.caption,
+                sender
+            );
 
-            // Пересылка медиа
-            if (data.downloadUrl) {
-                await sendMedia(
-                    ID_GROUP_TO,
-                    data.downloadUrl,
-                    data.fileName,
-                    `${sender}: ${data.caption || ""}`
-                );
-            }
-
-            return res.sendStatus(200);
+            console.log("Forwarded MEDIA:", f.fileName);
         }
 
-    } catch (err) {
-        console.error("FORWARD ERROR:", err);
+    } catch (e) {
+        console.error("Forwarding error:", e);
     }
 
     res.sendStatus(200);
 });
 
-
-// -----------------------
-// Старт
-// -----------------------
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("Server started on", PORT));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Bot listening on port", PORT));
