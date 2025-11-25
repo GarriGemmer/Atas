@@ -37,7 +37,11 @@ app.post('/webhook', async (req, res) => {
     return res.status(200).send('OK');
   }
 
-  const chatId = msg.senderData?.chatId || msg.senderData?.sender;
+  const chatId = msg.senderData?.chatId;  // в 100% случаев в группах он здесь
+    if (!chatId || chatId !== SOURCE_CHAT) {
+      console.log('Не наша группа или chatId пустой → пропускаем');
+      return res.status(200).send('OK');
+    }
   console.log('Сообщение пришло из:', chatId);
 
   if (chatId !== SOURCE_CHAT) {
